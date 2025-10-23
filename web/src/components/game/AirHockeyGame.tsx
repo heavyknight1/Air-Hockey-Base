@@ -18,6 +18,12 @@ export default function AirHockeyGame() {
       scorePlayer = 0;
       scoreAI = 0;
       scoreText!: Phaser.GameObjects.Text;
+      infoText!: Phaser.GameObjects.Text;
+      roundActive = false;
+      resetting = false;
+      winScore = 5;
+      playerTargetY = this.height / 2;
+      paused = false;
 
       create() {
         // Table background and center line
@@ -59,27 +65,52 @@ export default function AirHockeyGame() {
         (this.puck.body as Phaser.Physics.Arcade.Body).drag.set(0, 0);
 
         // Paddles
-        this.player = this.physics.add.image(60, this.height / 2, "paddleL").setImmovable(true).setCollideWorldBounds(true);
-        this.ai = this.physics.add.image(this.width - 60, this.height / 2, "paddleR").setImmovable(true).setCollideWorldBounds(true);
+        this.player = this.physics.add
+          .image(60, this.height / 2, "paddleL")
+          .setImmovable(true)
+          .setCollideWorldBounds(true);
+        this.ai = this.physics.add
+          .image(this.width - 60, this.height / 2, "paddleR")
+          .setImmovable(true)
+          .setCollideWorldBounds(true);
 
         // Collisions
         this.physics.add.collider(this.puck, this.player, this.onPaddleHit as any, undefined, this);
         this.physics.add.collider(this.puck, this.ai, this.onPaddleHit as any, undefined, this);
 
         // Score text
-        this.scoreText = this.add.text(this.width / 2, 16, "0 : 0", {
-          color: "#e2e8f0",
-          fontFamily: "monospace",
-          fontSize: "24px",
-        }).setOrigin(0.5, 0);
+        this.scoreText = this.add
+          .text(this.width / 2, 12, "0 : 0", {
+            color: "#e2e8f0",
+            fontFamily: "monospace",
+            fontSize: "24px",
+          })
+          .setOrigin(0.5, 0);
 
-        // Input: mouse controls player Y within left half
+        this.infoText = this.add
+          .text(this.width / 2, this.height - 24, "Boşluk: Başlat/Durdur — Hedef Skor: 5", {
+            color: "#94a3b8",
+            fontFamily: "monospace",
+            fontSize: "14px",
+          })
+          .setOrigin(0.5, 1);
+
+        // Input: mouse controls player target Y
         this.input.on("pointermove", (p: Phaser.Input.Pointer) => {
-          const clampY = Phaser.Math.Clamp(p.y, 45, this.height - 45);
-          this.player.setY(clampY);
+          this.playerTargetY = Phaser.Math.Clamp(p.y, 45, this.height - 45);
         });
 
-        // Kick off round
+        // Keyboard: Space to pause/resume
+        this.input.keyboard!.on("keydown-SPACE", () => {
+          this.paused = !this.paused;
+          if (!this.paused && !this.roundActive && !this.resetting) {
+            this.resetPuck(Phaser.Math.Between(0, 1) ? 1 : -1);
+          } else if (this.paused) {
+            (this.puck.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+          }
+        });
+
+        // Start initial round
         this.resetPuck(Phaser.Math.Between(0, 1) ? 1 : -1);
       }
 
@@ -87,48 +118,89 @@ export default function AirHockeyGame() {
         const pb = this.puck.body as Phaser.Physics.Arcade.Body;
         const paddle = Math.abs(this.puck.x - this.player.x) < Math.abs(this.puck.x - this.ai.x) ? this.player : this.ai;
         const diff = this.puck.y - paddle.y;
-        pb.velocity.y += diff * 4;
-        const max = 520;
+        const norm = Phaser.Math.Clamp(diff / 45, -1, 1);
+        pb.velocity.y += norm * 180; // add spin
+        // Ensure horizontal keeps moving to avoid stalls
+        const minX = 160;
+        if (Math.abs(pb.velocity.x) < minX) {
+          pb.velocity.x = (pb.velocity.x >= 0 ? 1 : -1) * minX;
+        }
+        const max = 620;
         pb.velocity.x = Phaser.Math.Clamp(pb.velocity.x, -max, max);
         pb.velocity.y = Phaser.Math.Clamp(pb.velocity.y, -max, max);
       };
 
       resetPuck(dir: 1 | -1) {
+        this.resetting = false;
+        this.roundActive = true;
+        this.paused = false;
         this.puck.setPosition(this.width / 2, this.height / 2);
-        const speed = 320;
-        const angle = Phaser.Math.DegToRad(Phaser.Math.Between(-25, 25));
+        const speed = 340;
+        const angle = Phaser.Math.DegToRad(Phaser.Math.Between(-20, 20));
         const vx = Math.cos(angle) * speed * dir;
         const vy = Math.sin(angle) * speed;
         this.puck.setVelocity(vx, vy);
       }
 
       goalScored(byPlayer: boolean) {
-        if (byPlayer) this.scorePlayer++; else this.scoreAI++;
+        if (this.resetting || !this.roundActive) return;
+        this.roundActive = false;
+        this.resetting = true;
+        // Count once per round
+        if (byPlayer) this.scorePlayer += 1; else this.scoreAI += 1;
         this.scoreText.setText(`${this.scorePlayer} : ${this.scoreAI}`);
-        this.time.delayedCall(500, () => this.resetPuck(byPlayer ? -1 : 1));
+
+        // Win check
+        if (this.scorePlayer >= this.winScore || this.scoreAI >= this.winScore) {
+          const winner = this.scorePlayer > this.scoreAI ? "Oyuncu" : "Bilgisayar";
+          this.infoText.setText(`${winner} kazandı! Boşluk ile yeniden başlat.`);
+          (this.puck.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+          this.time.delayedCall(100, () => {
+            this.paused = true;
+          });
+          return;
+        }
+
+        // Quick reset without letting puck leave view
+        this.time.delayedCall(500, () => {
+          this.resetPuck(byPlayer ? -1 : 1);
+        });
       }
 
       update(): void {
-        // Goals: left/right out of bounds
-        if (this.puck.x < -10) {
-          this.goalScored(false);
-        } else if (this.puck.x > this.width + 10) {
-          this.goalScored(true);
+        // Keep puck visibly inside bounds at all times
+        const radius = 12;
+        this.puck.x = Phaser.Math.Clamp(this.puck.x, radius, this.width - radius);
+        this.puck.y = Phaser.Math.Clamp(this.puck.y, radius, this.height - radius);
+
+        // Goals: when logically crossing goal lines (left/right edges)
+        if (this.roundActive && !this.paused) {
+          if (this.puck.x <= radius + 1) {
+            this.goalScored(false); // AI scores
+          } else if (this.puck.x >= this.width - radius - 1) {
+            this.goalScored(true); // Player scores
+          }
         }
+
+        if (this.paused) return;
 
         // Constrain paddles to halves
         this.player.x = 60;
         this.ai.x = this.width - 60;
 
-        // Simple AI
-        const targetY = (this.puck.x > this.width / 2 - 40) ? this.puck.y : this.height / 2;
+        // Smooth player control toward target Y
+        const lerp = Phaser.Math.Linear;
+        this.player.setY(Phaser.Math.Clamp(lerp(this.player.y, this.playerTargetY, 0.25), 45, this.height - 45));
+
+        // Simple AI following logic
+        const targetY = this.puck.x > this.width / 2 - 40 ? this.puck.y : this.height / 2;
         const dy = targetY - this.ai.y;
         this.ai.setY(Phaser.Math.Clamp(this.ai.y + Phaser.Math.Clamp(dy * 0.06, -6, 6), 45, this.height - 45));
 
         // Cap puck speed
         const pb = this.puck.body as Phaser.Physics.Arcade.Body;
         const v = new Phaser.Math.Vector2(pb.velocity.x, pb.velocity.y);
-        const max = 600;
+        const max = 640;
         if (v.length() > max) {
           v.setLength(max);
           pb.setVelocity(v.x, v.y);
@@ -159,4 +231,3 @@ export default function AirHockeyGame() {
     </div>
   );
 }
-

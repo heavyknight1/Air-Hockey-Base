@@ -9,7 +9,7 @@ export default function AirHockeyGame() {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    class AirHockeyScene extends Phaser.Scene {
+    class AirHockeyScene extends Phaser.Scene { 
       width = 800;
       height = 450;
       puck!: Phaser.Physics.Arcade.Image;
@@ -25,7 +25,7 @@ export default function AirHockeyGame() {
       playerTargetY = this.height / 2;
       paused = false;
 
-      create() {
+      aiEnabled = true; keys!: { w: Phaser.Input.Keyboard.Key; s: Phaser.Input.Keyboard.Key; }; create() {
         // Table background and center line
         const g = this.add.graphics();
         g.fillStyle(0x0b1220, 1).fillRect(0, 0, this.width, this.height);
@@ -87,12 +87,12 @@ export default function AirHockeyGame() {
           })
           .setOrigin(0.5, 0);
 
-        this.infoText = this.add
-          .text(this.width / 2, this.height - 24, "Boşluk: Başlat/Durdur — Hedef Skor: 5", {
-            color: "#94a3b8",
-            fontFamily: "monospace",
-            fontSize: "14px",
-          })
+        this.infoText = this.add
+          .text(this.width / 2, this.height - 24, "Boşluk: Başlat/Durdur — Hedef Skor: 5 — M: Mod (AI/2P)", {
+            color: "#94a3b8",
+            fontFamily: "monospace",
+            fontSize: "14px",
+          })
           .setOrigin(0.5, 1);
 
         // Input: mouse controls player target Y
@@ -110,6 +110,18 @@ export default function AirHockeyGame() {
           }
         });
 
+                // Toggle AI/2P with M
+        this.input.keyboard!.on("keydown-M", () => {
+          this.aiEnabled = !this.aiEnabled;
+          const mode = this.aiEnabled ? "AI" : "2P";
+          this.infoText.setText(`Boşluk: Başlat/Durdur — Hedef Skor: ${this.winScore} — Mod: ${mode}`);
+        });
+        // Player 2 keys (W/S for right paddle)
+        this.keys = {
+          w: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+          s: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.S),
+        } as any;
+
         // Start initial round
         this.resetPuck(Phaser.Math.Between(0, 1) ? 1 : -1);
       }
@@ -168,11 +180,7 @@ export default function AirHockeyGame() {
       }
 
       update(): void {
-        // Keep puck visibly inside bounds at all times
         const radius = 12;
-        this.puck.x = Phaser.Math.Clamp(this.puck.x, radius, this.width - radius);
-        this.puck.y = Phaser.Math.Clamp(this.puck.y, radius, this.height - radius);
-
         // Goals: when logically crossing goal lines (left/right edges)
         if (this.roundActive && !this.paused) {
           if (this.puck.x <= radius + 1) {
@@ -191,14 +199,29 @@ export default function AirHockeyGame() {
         // Smooth player control toward target Y
         const lerp = Phaser.Math.Linear;
         this.player.setY(Phaser.Math.Clamp(lerp(this.player.y, this.playerTargetY, 0.25), 45, this.height - 45));
-
-        // Simple AI following logic
-        const targetY = this.puck.x > this.width / 2 - 40 ? this.puck.y : this.height / 2;
-        const dy = targetY - this.ai.y;
-        this.ai.setY(Phaser.Math.Clamp(this.ai.y + Phaser.Math.Clamp(dy * 0.06, -6, 6), 45, this.height - 45));
-
+        // Manual bounce on top/bottom to avoid sticking
+        const pb = this.puck.body as Phaser.Physics.Arcade.Body;
+        if (this.puck.y <= radius && pb.velocity.y < 0) {
+          this.puck.y = radius;
+          pb.velocity.y *= -1;
+        } else if (this.puck.y >= this.height - radius && pb.velocity.y > 0) {
+          this.puck.y = this.height - radius;
+          pb.velocity.y *= -1;
+        }
+
+        // Right paddle: AI or 2P keyboard control
+        if (this.aiEnabled) {
+          const targetY = this.puck.x > this.width / 2 - 40 ? this.puck.y : this.height / 2;
+          const dy = targetY - this.ai.y;
+          this.ai.setY(Phaser.Math.Clamp(this.ai.y + Phaser.Math.Clamp(dy * 0.06, -6, 6), 45, this.height - 45));
+        } else {
+          const speed = 7;
+          let ny = this.ai.y;
+          if (this.keys.w.isDown) ny -= speed;
+          if (this.keys.s.isDown) ny += speed;
+          this.ai.setY(Phaser.Math.Clamp(ny, 45, this.height - 45));
+        }
         // Cap puck speed
-        const pb = this.puck.body as Phaser.Physics.Arcade.Body;
         const v = new Phaser.Math.Vector2(pb.velocity.x, pb.velocity.y);
         const max = 640;
         if (v.length() > max) {
@@ -230,4 +253,10 @@ export default function AirHockeyGame() {
       <div className="shadow-md border border-slate-700 rounded" />
     </div>
   );
-}
+}
+
+
+
+
+
+
